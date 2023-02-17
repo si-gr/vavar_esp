@@ -46,7 +46,7 @@ static const uint16_t spp_service_uuid = 0xABF0;
 #define UART_RXD 5
 
 #define UART_PORT_NUM      1
-#define UART_BAUD_RATE     115200
+#define UART_BAUD_RATE     1000000
 #define UART_BUF_SIZE     1024
 
 static const uint8_t spp_adv_data[23] = {
@@ -353,7 +353,7 @@ void uart_task(void *pvParameters)
                     uart_read_bytes(UART_PORT_NUM,temp,event.size,portMAX_DELAY);
                     mempcpy(uart_data_buf+uart_data_len,temp,event.size);
                     uart_data_len += event.size;
-                    if(uart_data_len + event.size > 10 || (event.size > 0 && temp[0] == 0x0D)){
+                    if(uart_data_len + event.size > 19 || (event.size > 0 && temp[0] == 0x0D)){
                         ESP_LOGE(GATTS_TABLE_TAG, "%s uart_data_len + event.size > UART_BUF_SIZE\n", __func__);
                         esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL],uart_data_len, uart_data_buf, false);
                         uart_data_len = 0;
