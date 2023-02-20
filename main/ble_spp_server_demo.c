@@ -46,8 +46,10 @@ static const uint16_t spp_service_uuid = 0xABF0;
 #define UART_RXD 5
 
 #define UART_PORT_NUM      1
-#define UART_BAUD_RATE     1000000
+#define UART_BAUD_RATE     921600
 #define UART_BUF_SIZE     1024
+
+static const bool uart_debug = false;
 
 static const uint8_t spp_adv_data[23] = {
     /* Flags */
@@ -72,6 +74,9 @@ static uint8_t heartbeat_count_num = 0;
 #endif
 
 static bool enable_data_ntf = false;
+
+
+static bool enable_data_ntf_write_evt = false;
 static bool is_connected = false;
 static esp_bd_addr_t spp_remote_bda = {0x0,};
 
@@ -327,26 +332,42 @@ void uart_task(void *pvParameters)
 
     for (;;) {
         //Waiting for UART event.
-        if (xQueueReceive(spp_uart_queue, (void * )&event, (TickType_t)portMAX_DELAY)) {
+        if (xQueueReceive(spp_uart_queue, (void * )&event, (TickType_t) 0xff)) {
             switch (event.type) {
             //Event of UART receving data
             case UART_DATA:
+                uart_read_bytes(UART_PORT_NUM, uart_data_buf, event.size, (TickType_t) 0xff);
                 if ((event.size)&&(is_connected)) {
-                    uint8_t * temp = NULL;
-                    uint8_t * ntf_value_p = NULL;
 #ifdef SUPPORT_HEARTBEAT
                     if(!enable_heart_ntf){
+                        if(uart_debug){
                         ESP_LOGE(GATTS_TABLE_TAG, "%s do not enable heartbeat Notify\n", __func__);
+                        }
                         break;
                     }
 #endif
                     if(!enable_data_ntf){
+                        if(uart_debug){
                         ESP_LOGE(GATTS_TABLE_TAG, "%s do not enable data Notify\n", __func__);
+                        }
                         break;
                     }
+                    
+                    if(uart_debug){
+                        ESP_LOGE(GATTS_TABLE_TAG, "ua\n");
+                    }
+                    esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], event.size, uart_data_buf, false);
+                    
+                    
+                    /*
+                    
+                    uint8_t * temp = NULL;
+                    uint8_t * ntf_value_p = NULL;
                     temp = (uint8_t *)malloc(sizeof(uint8_t)*event.size);
                     if(temp == NULL){
+                        if(uart_debug){
                         ESP_LOGE(GATTS_TABLE_TAG, "%s malloc.1 failed\n", __func__);
+                        }
                         break;
                     }
                     memset(temp,0x0,event.size);
@@ -354,7 +375,10 @@ void uart_task(void *pvParameters)
                     mempcpy(uart_data_buf+uart_data_len,temp,event.size);
                     uart_data_len += event.size;
                     if(uart_data_len + event.size > 19 || (event.size > 0 && temp[0] == 0x0D)){
+                        
+                        if(uart_debug){
                         ESP_LOGE(GATTS_TABLE_TAG, "%s uart_data_len + event.size > UART_BUF_SIZE\n", __func__);
+                        }
                         esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL],uart_data_len, uart_data_buf, false);
                         uart_data_len = 0;
                         memset(uart_data_buf,0x0,UART_BUF_SIZE);
@@ -362,11 +386,14 @@ void uart_task(void *pvParameters)
                     }
                     
                     free(temp);
+                    */
                 }
                 break;
             default:
                 break;
             }
+            // delete other events from queue
+            //xQueueReset(spp_uart_queue);
         }
     }
     vTaskDelete(NULL);
@@ -390,7 +417,7 @@ static void spp_uart_init(void)
     uart_param_config(UART_PORT_NUM, &uart_config);
     //Set UART pins
     uart_set_pin(UART_PORT_NUM, UART_TXD, UART_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    xTaskCreate(uart_task, "uTask", 2048, (void*)UART_PORT_NUM, 8, NULL);
+    xTaskCreate(uart_task, "uTask", 2048 * 4, (void*)UART_PORT_NUM, 8, NULL);
 }
 
 #ifdef SUPPORT_HEARTBEAT
@@ -471,7 +498,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     esp_ble_gatts_cb_param_t *p_data = (esp_ble_gatts_cb_param_t *) param;
     uint8_t res = 0xff;
 
-    ESP_LOGI(GATTS_TABLE_TAG, "event = %x\n",event);
+    if(uart_debug){
+        ESP_LOGI(GATTS_TABLE_TAG, "event = %x\n",event);
+    }
     switch (event) {
     	case ESP_GATTS_REG_EVT:
     	    ESP_LOGI(GATTS_TABLE_TAG, "%s %d\n", __func__, __LINE__);
@@ -506,8 +535,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 }else if(res == SPP_IDX_SPP_DATA_NTF_CFG){
                     if((p_data->write.len == 2)&&(p_data->write.value[0] == 0x01)&&(p_data->write.value[1] == 0x00)){
                         enable_data_ntf = true;
+                        ESP_LOGI(GATTS_TABLE_TAG, "Notify enabled\n");
                     }else if((p_data->write.len == 2)&&(p_data->write.value[0] == 0x00)&&(p_data->write.value[1] == 0x00)){
                         enable_data_ntf = false;
+                        ESP_LOGI(GATTS_TABLE_TAG, "Notify disabled\n");
+                        enable_data_ntf_write_evt = false;
                     }
                 }
 #ifdef SUPPORT_HEARTBEAT
@@ -544,22 +576,33 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     	        print_write_buffer();
     	        free_write_buffer();
     	    }
+            enable_data_ntf_write_evt = true;
     	    break;
     	}
     	case ESP_GATTS_MTU_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_MTU_EVT\n");
     	    spp_mtu_size = p_data->mtu.mtu;
     	    break;
     	case ESP_GATTS_CONF_EVT:
+        
+            if(uart_debug){
+                ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_CONF_EVT\n");
+            }
     	    break;
     	case ESP_GATTS_UNREG_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_UNREG_EVT\n");
         	break;
     	case ESP_GATTS_DELETE_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_DELETE_EVT\n");
         	break;
     	case ESP_GATTS_START_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_START_EVT\n");
         	break;
     	case ESP_GATTS_STOP_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_STOP_EVT\n");
         	break;
     	case ESP_GATTS_CONNECT_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_CONNECT_EVT\n");
     	    spp_conn_id = p_data->connect.conn_id;
     	    spp_gatts_if = gatts_if;
     	    is_connected = true;
@@ -570,8 +613,10 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 #endif
         	break;
     	case ESP_GATTS_DISCONNECT_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_DISCONNECT_EVT\n");
     	    is_connected = false;
     	    enable_data_ntf = false;
+            enable_data_ntf_write_evt = false;
 #ifdef SUPPORT_HEARTBEAT
     	    enable_heart_ntf = false;
     	    heartbeat_count_num = 0;
@@ -579,14 +624,19 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     	    esp_ble_gap_start_advertising(&spp_adv_params);
     	    break;
     	case ESP_GATTS_OPEN_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_OPEN_EVT\n");
     	    break;
     	case ESP_GATTS_CANCEL_OPEN_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_CANCEL_OPEN_EVT\n");
     	    break;
     	case ESP_GATTS_CLOSE_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_CLOSE_EVT\n");
     	    break;
     	case ESP_GATTS_LISTEN_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_LISTEN_EVT\n");
     	    break;
     	case ESP_GATTS_CONGEST_EVT:
+            ESP_LOGI(GATTS_TABLE_TAG, "ESP_GATTS_CONGEST_EVT\n");
     	    break;
     	case ESP_GATTS_CREAT_ATTR_TAB_EVT:{
     	    ESP_LOGI(GATTS_TABLE_TAG, "The number handle =%x\n",param->add_attr_tab.num_handle);
@@ -610,7 +660,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
-    ESP_LOGI(GATTS_TABLE_TAG, "EVT %d, gatts if %d\n", event, gatts_if);
+    if(event != ESP_GATTS_CONF_EVT || uart_debug){
+        ESP_LOGI(GATTS_TABLE_TAG, "EVT %d, gatts if %d\n", event, gatts_if);
+    }
 
     /* If event is register event, store the gatts_if for each profile */
     if (event == ESP_GATTS_REG_EVT) {
@@ -662,7 +714,7 @@ void app_main(void)
         return;
     }
 
-    ESP_LOGI(GATTS_TABLE_TAG, "%s init bluetooth\n", __func__);
+    ESP_LOGI(GATTS_TABLE_TAG, "%s init bluetooth 1\n", __func__);
     ret = esp_bluedroid_init();
     if (ret) {
         ESP_LOGE(GATTS_TABLE_TAG, "%s init bluetooth failed: %s\n", __func__, esp_err_to_name(ret));
