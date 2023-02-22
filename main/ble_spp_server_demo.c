@@ -49,7 +49,7 @@ static const uint16_t spp_service_uuid = 0xABF0;
 #define UART_BAUD_RATE     921600
 #define UART_BUF_SIZE     1024
 
-static const bool uart_debug = false;
+static const bool uart_debug = true;
 
 static const uint8_t spp_adv_data[23] = {
     /* Flags */
@@ -324,11 +324,11 @@ static void print_write_buffer(void)
 void uart_task(void *pvParameters)
 {
     uart_event_t event;
-    uint8_t total_num = 0;
-    uint8_t current_num = 0;
+    //uint8_t total_num = 0;
+    //uint8_t current_num = 0;
 
     uint8_t *uart_data_buf = (uint8_t *) malloc(UART_BUF_SIZE);
-    uint16_t uart_data_len = 0;
+    //uint16_t uart_data_len = 0;
 
     for (;;) {
         //Waiting for UART event.
@@ -338,6 +338,12 @@ void uart_task(void *pvParameters)
             case UART_DATA:
                 uart_read_bytes(UART_PORT_NUM, uart_data_buf, event.size, (TickType_t) 0xff);
                 if ((event.size)&&(is_connected)) {
+                    if(uart_debug){
+                        ESP_LOGI("u", "ua\n");
+                        //ESP_LOGI(GATTS_TABLE_TAG, "queue waiting %d\n",uxQueueMessagesWaiting (spp_uart_queue));
+                        //ESP_LOGI("Heap Free", "%08lu", esp_get_free_heap_size());
+
+                    }
 #ifdef SUPPORT_HEARTBEAT
                     if(!enable_heart_ntf){
                         if(uart_debug){
@@ -353,10 +359,9 @@ void uart_task(void *pvParameters)
                         break;
                     }
                     
-                    if(uart_debug){
-                        ESP_LOGE(GATTS_TABLE_TAG, "ua\n");
-                    }
+                    
                     esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], event.size, uart_data_buf, false);
+
                     
                     
                     /*
@@ -394,6 +399,9 @@ void uart_task(void *pvParameters)
             }
             // delete other events from queue
             //xQueueReset(spp_uart_queue);
+            while (uxQueueMessagesWaiting (spp_uart_queue) > 1){
+                xQueueReceive(spp_uart_queue, (void * )&event, (TickType_t) 0x80);
+            }
         }
     }
     vTaskDelete(NULL);
@@ -412,7 +420,7 @@ static void spp_uart_init(void)
     };
 
     //Install UART driver, and get the queue.
-    uart_driver_install(UART_PORT_NUM, 4096, 8192, 10,&spp_uart_queue,0);
+    uart_driver_install(UART_PORT_NUM, 4096, 8192, 100,&spp_uart_queue,0);
     //Set UART parameters
     uart_param_config(UART_PORT_NUM, &uart_config);
     //Set UART pins
@@ -499,7 +507,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     uint8_t res = 0xff;
 
     if(uart_debug){
-        ESP_LOGI(GATTS_TABLE_TAG, "event = %x\n",event);
+        ESP_LOGI(GATTS_TABLE_TAG, "event = %x dntf %d con %d\n",event, enable_data_ntf, is_connected);
     }
     switch (event) {
     	case ESP_GATTS_REG_EVT:
